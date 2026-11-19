@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Notification handler Lambda. Validates and normalizes a stream of user
+  events (user_registered, password_reset, user_deleted, ...) and stores them
+  as Notification rows in MySQL (simulated). Zero runtime dependencies.
+
+Parameters:
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARN, ERROR]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 30
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+  NotificationHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app/handler.handler
+      CodeUri: .
+      Description: Validates, normalizes and stores user events as notifications.
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          LOG_LEVEL: !Ref LogLevel
+      Events:
+        EventsHttpApi:
+          Type: HttpApi
+          Properties:
+            Path: /events
+            Method: post
+
+Outputs:
+  NotificationHandlerFunctionArn:
+    Value: !GetAtt NotificationHandlerFunction.Arn
+  HttpApiEndpoint:
+    Description: POST /events here.
+    Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/events'

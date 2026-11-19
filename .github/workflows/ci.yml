@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - name: Enforce the zero-dependency invariant
+        run: |
+          node -e "const p = require('./package.json'); const d = [...Object.keys(p.dependencies ?? {}), ...Object.keys(p.devDependencies ?? {})]; if (d.length) { console.error('unexpected dependencies:', d); process.exit(1); }"
+
+  sam:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+      - run: sam validate
+      - run: sam build
