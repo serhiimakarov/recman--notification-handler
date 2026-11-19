@@ -1,0 +1,17 @@
+{
+  "name": "notification-handler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AWS Lambda (Node.js) that validates and normalizes a stream of semi-structured user events and stores them as Notification rows in MySQL (simulated).",
+  "type": "module",
+  "main": "app/handler.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node app/run.js",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage"
+  },
+  "license": "MIT"
+}
