@@ -1,6 +1,6 @@
 # Notification Handler — AWS Lambda (Node.js)
 
-An AWS Lambda function that processes a stream of semi-structured user events: it validates and normalizes each event and stores the result as a row in the MySQL `Notification` table (simulated by a dummy `insert`). Invalid events are logged and skipped; the rest of the batch is processed without interruption.
+An AWS Lambda function that processes a stream of semi-structured user events: it validates and normalizes each event and stores the result as a row in the MySQL `Notification` table (simulated by a dummy `insertToMySQL`). Invalid events are logged and skipped; the rest of the batch is processed without interruption.
 
 The project has **zero dependencies** (Node.js ≥ 20 built-ins only) — no `npm install` needed.
 
@@ -99,7 +99,7 @@ app/
   src/
     pipeline.js           # Orchestration: type lookup → dedupe → normalize → insert
     normalize.js          # Field validators: email, date → ISO 8601, roles → string[]
-    db.js                 # toNotificationRow() + dummy insert()
+    db.js                 # toNotificationRow() + dummy insertToMySQL()
     errors.js             # Typed errors with machine-readable codes
     logger.js             # JSON-lines logger with levels
     events/

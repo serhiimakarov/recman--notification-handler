@@ -5,7 +5,7 @@
  */
 import { EVENT_TYPES } from './events/index.js';
 import { EventError, ValidationError } from './errors.js';
-import { toNotificationRow, insert } from './db.js';
+import { toNotificationRow, insertToMySQL } from './db.js';
 
 /** Accept a bare array or { events: [...] }; anything else is a bad request. */
 export function extractEvents(payload) {
@@ -21,7 +21,7 @@ export function extractEvents(payload) {
  *   results[i] mirrors events[i]: { index, type, ok: true, notification } or
  *   { index, type, ok: false, error, message }.
  */
-export async function processEvents(events, { logger, insert = insert, types = EVENT_TYPES } = {}) {
+export async function processEvents(events, { logger, insert = insertToMySQL, types = EVENT_TYPES } = {}) {
   const seen = new Set(); // ponytail: in-memory per invocation; a UNIQUE(event_id) column covers cross-invocation dedupe
   const results = [];
 

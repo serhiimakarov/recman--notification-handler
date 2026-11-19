@@ -1,7 +1,7 @@
 /**
  * MySQL integration (simulated). `toNotificationRow` is the real contract:
  * it maps a normalized event onto the `Notification` table columns. Replace
- * `insert` with a mysql2 call when wiring a real database — the row
+ * `insertToMySQL` with a mysql2 call when wiring a real database — the row
  * shape stays the same.
  */
 
@@ -19,14 +19,14 @@ export function toNotificationRow({ type, typeId, eventId, data }) {
 }
 
 /**
- * Dummy insert: logs the SQL that a real implementation would run and returns
+ * Dummy insertToMySQL: logs the SQL that a real implementation would run and returns
  * a fake auto-increment id. Async so the signature matches a real driver.
  */
 let nextId = 1;
-export async function insert(row, { logger } = {}) {
+export async function insertToMySQL(row, { logger } = {}) {
   const sql =
     'INSERT INTO `Notification` (NotificationTypeID, NotificationData, CreatedByType, CreatedByID) VALUES (?, ?, ?, ?)';
   const params = [row.NotificationTypeID, JSON.stringify(row.NotificationData), row.CreatedByType, row.CreatedByID];
-  logger?.debug('insert', { sql, params });
+  logger?.debug('insertToMySQL', { sql, params });
   return { NotificationID: nextId++ };
 }
