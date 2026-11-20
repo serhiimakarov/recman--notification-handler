@@ -1,5 +1,7 @@
 # Notification Handler — AWS Lambda (Node.js)
 
+DEMO: https://www.loom.com/share/519f79dccd014dd197fa7000e8b7c3f4
+
 An AWS Lambda function that processes a stream of semi-structured user events: it validates and normalizes each event and stores the result as a row in the MySQL `Notification` table (simulated by a dummy `insertToMySQL`). Invalid events are logged and skipped; the rest of the batch is processed without interruption.
 
 The project has **zero dependencies** (Node.js ≥ 20 built-ins only) — no `npm install` needed.
@@ -46,16 +48,18 @@ Output (stdout; logs go to stderr):
 
 ## Table of contents
 
-- [Architecture](#architecture)
-- [Project layout](#project-layout)
-- [Local run](#local-run)
-- [Lambda event formats](#lambda-event-formats)
-- [Validation & normalization rules](#validation--normalization-rules)
-- [Error handling](#error-handling)
-- [Database mapping](#database-mapping)
-- [AWS: build, local invoke, deploy](#aws-build-local-invoke-deploy)
-- [Testing](#testing)
-- [Extending: adding an event type](#extending-adding-an-event-type)
+- [Notification Handler — AWS Lambda (Node.js)](#notification-handler--aws-lambda-nodejs)
+  - [Table of contents](#table-of-contents)
+  - [Architecture](#architecture)
+  - [Project layout](#project-layout)
+  - [Local run](#local-run)
+  - [Lambda event formats](#lambda-event-formats)
+  - [Validation \& normalization rules](#validation--normalization-rules)
+  - [Error handling](#error-handling)
+  - [Database mapping](#database-mapping)
+  - [AWS: build, local invoke, deploy](#aws-build-local-invoke-deploy)
+  - [Testing](#testing)
+  - [Extending: adding an event type](#extending-adding-an-event-type)
 
 ---
 
