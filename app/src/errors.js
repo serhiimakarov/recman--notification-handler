@@ -15,11 +15,11 @@ export class AppError extends Error {
 /** Operator mistake: bad CLI flags, unreadable input file. */
 export class ConfigurationError extends AppError {
   constructor(message, options = {}) {
-    super(message, { code: 'configuration_error', httpStatus: 500, ...options });
+    super(message, { code: 'configuration_error', ...options });
   }
 }
 
-/** Malformed request payload as a whole (caller's fault -> HTTP 400). */
+/** Malformed request payload as a whole (caller's fault -> HTTP 400/413). */
 export class ValidationError extends AppError {
   constructor(message, options = {}) {
     super(message, { code: 'invalid_request', httpStatus: 400, ...options });
@@ -28,11 +28,11 @@ export class ValidationError extends AppError {
 
 /**
  * One event failed validation. Never fatal: the pipeline logs it and keeps
- * going. `code` is one of: missing_field, invalid_email, invalid_date,
- * invalid_roles, unknown_type, duplicate_event.
+ * going. `code` is one of: invalid_event, missing_field, invalid_email,
+ * invalid_date, invalid_roles, unknown_type, duplicate_event.
  */
 export class EventError extends AppError {
   constructor(message, code) {
-    super(message, { code, httpStatus: 400 });
+    super(message, { code });
   }
 }

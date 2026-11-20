@@ -19,23 +19,30 @@ Globals:
     Timeout: 30
     LoggingConfig:
       LogFormat: JSON
+      ApplicationLogLevel: !Ref LogLevel
 
 Resources:
+  EventsHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      # Callers sign requests with SigV4 (IAM). Swap for a JWT authorizer if the producer is not an AWS principal.
+      Auth:
+        EnableIamAuthorizer: true
+        DefaultAuthorizer: AWS_IAM
+
   NotificationHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: app/handler.handler
-      CodeUri: .
+      Handler: handler.handler
+      CodeUri: app/
       Description: Validates, normalizes and stores user events as notifications.
       Policies:
         - AWSLambdaBasicExecutionRole
-      Environment:
-        Variables:
-          LOG_LEVEL: !Ref LogLevel
       Events:
-        EventsHttpApi:
+        PostEvents:
           Type: HttpApi
           Properties:
+            ApiId: !Ref EventsHttpApi
             Path: /events
             Method: post
 
@@ -43,5 +50,5 @@ Outputs:
   NotificationHandlerFunctionArn:
     Value: !GetAtt NotificationHandlerFunction.Arn
   HttpApiEndpoint:
-    Description: POST /events here.
-    Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/events'
+    Description: POST /events here (IAM-signed).
+    Value: !Sub 'https://${EventsHttpApi}.execute-api.${AWS::Region}.amazonaws.com/events'

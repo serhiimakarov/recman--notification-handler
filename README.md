@@ -20,6 +20,7 @@ Output (stdout; logs go to stderr):
       "notification": {
         "NotificationID": 1,
         "NotificationTypeID": 1,
+        "EventID": null,
         "NotificationData": {
           "type": "user_registered",
           "name": "Alice",
@@ -31,11 +32,11 @@ Output (stdout; logs go to stderr):
         "CreatedByID": 0
       }
     },
-    { "index": 1, "type": "user_registered", "ok": false, "error": "invalid_email", "message": "\"email\" is not a valid email address: \"bob.smith(at)example.com\"" },
+    { "index": 1, "type": "user_registered", "ok": false, "error": "invalid_email", "message": "\"email\" is not a valid email address" },
     { "index": 4, "type": "unknown_type", "ok": false, "error": "unknown_type", "message": "unsupported event type: \"unknown_type\"" },
-    { "index": 6, "type": "user_registered", "ok": false, "error": "duplicate_event", "message": "duplicate event_id \"dedupe-1\" (first occurrence wins)" }
+    { "index": 6, "type": "user_registered", "ok": false, "error": "duplicate_event", "message": "duplicate event_id \"dedupe-1\" (first stored occurrence wins)" }
   ],
-  "stats": { "events": 7, "stored": 4, "rejected": 3 }
+  "stats": { "events": 7, "stored": 4, "rejected": 3, "failed": 0 }
 }
 ```
 
@@ -72,8 +73,8 @@ Output (stdout; logs go to stderr):
                  │   2. dedupe on `event_id` (first wins)       │
                  │   3. definition.normalize(event)             │
                  │        └─ src/normalize.js (email/date/roles)│
-                 │   4. toNotificationRow() → insert()   │
-                 │   bad event → per-event error, loop continues │
+                 │   4. toNotificationRow() → insert()          │
+                 │   bad event / failed insert → per-event error │
                  └──────────────────────────────────────────────┘
                                           │
                  ┌────────────────────────▼─────────────────────┐
@@ -87,14 +88,17 @@ Output (stdout; logs go to stderr):
 
 - **One responsibility per module** — field normalizers, event definitions, the registry, DB mapping and orchestration are separate files; the CLI and Lambda handler are thin adapters over the same `processEvents()`.
 - **Open for extension** — an event type is a small object `{ typeId, normalize }`. Adding one touches one new file and one registry line.
-- **Fail-safe** — any `EventError` becomes a per-event result and a `WARN` log line. Only real bugs and DB outages fail the invocation.
-- **Deterministic** — dates are always emitted as ISO 8601 UTC regardless of machine timezone.
+- **Fail-safe** — any `EventError` becomes a per-event result and a `WARN` log line; a failed insert becomes a per-event `storage_error`. Only real bugs fail the invocation.
+- **Idempotent** — inserts are `INSERT IGNORE` against a `UNIQUE(EventID)` index, so a client can retry a whole batch after a `207`/`500` without creating duplicates.
+- **No PII in errors or logs** — messages name the field and the rule, never the rejected value.
+- **Deterministic** — dates are parsed from an explicit format allow-list (never the engine's `Date` string parser) and emitted as ISO 8601 UTC regardless of machine timezone.
 
 ## Project layout
 
 ```
 app/
   handler.js              # Lambda entry point (HTTP API v2 or direct invocation)
+  package.json            # { "type": "module" } — app/ is what gets deployed (CodeUri)
   run.js                  # Local CLI runner (simulates a Lambda invocation)
   src/
     pipeline.js           # Orchestration: type lookup → dedupe → normalize → insert
@@ -109,8 +113,8 @@ app/
       user-deleted.js
 sample/events.json        # The sample input from the spec (valid, invalid, duplicate)
 events/                   # Ready-made events for `sam local invoke`
-test/                     # 20 tests, node:test, zero dependencies
-template.yaml             # SAM template (Lambda + HTTP API POST /events)
+test/                     # 24 tests, node:test, zero dependencies
+template.yaml             # SAM template (Lambda + IAM-authenticated HTTP API POST /events)
 ```
 
 ## Local run
@@ -125,7 +129,7 @@ node app/run.js --help
 | Flag           | Description                                              |
 | -------------- | -------------------------------------------------------- |
 | `--input`      | JSON file: an array of events, or `{ "events": [...] }`  |
-| `--log-level`  | `DEBUG` / `INFO` / `WARN` / `ERROR` (default `INFO`, or `$LOG_LEVEL`) |
+| `--log-level`  | `DEBUG` / `INFO` / `WARN` / `ERROR` (default `INFO`, or `$LOG_LEVEL`). Lambda uses `ApplicationLogLevel` instead |
 | `--help`       | Print usage                                              |
 
 Exit code `0` even when individual events are rejected (that is expected input). Exit code `1` only for fatal problems: missing/unreadable input, invalid JSON, unknown flags.
@@ -135,26 +139,27 @@ Exit code `0` even when individual events are rejected (that is expected input).
 | Invocation | Input | Output |
 | --- | --- | --- |
 | Direct (`aws lambda invoke`) | a bare JSON array of events, or `{ "events": [...] }` | `{ results, stats }` |
-| API Gateway HTTP API (payload v2), `POST /events` | same JSON in `body` (base64-aware) | `200` with `{ results, stats }`; `400 { error, message }` for malformed bodies; `500` with a generic message for internal failures (details stay in the logs) |
+| API Gateway HTTP API (payload v2), `POST /events`, IAM-signed | same JSON in `body` (base64-aware), at most 1000 events | `200` with `{ results, stats }`; `207` when some events have `storage_error`; `400`/`413` `{ error, message }` for malformed or oversized bodies; `500` with a generic message for internal failures (details stay in the logs) |
 
 ## Validation & normalization rules
 
 | Field | Rule | Error code |
 | --- | --- | --- |
 | `type` | must be registered in `src/events/index.js` | `unknown_type` |
-| `event_id` (optional) | if present, a second event with the same id in the batch is rejected; the first one wins | `duplicate_event` |
-| `email` | trimmed, lower-cased, must look like `local@domain.tld` | `invalid_email` |
-| date fields (`joined`, `requested`, `deleted`) | anything `Date.parse` accepts, plus ordinal suffixes (`April 5th`); zone-less timestamps are taken as UTC; output is ISO 8601 UTC (`2021-04-05T21:45:00.000Z`). Relative words (`yesterday`) are rejected | `invalid_date` |
+| `event_id` (optional) | if present, a second event with the same id in the batch is rejected once the first one has been stored (an invalid first occurrence does not block a valid retry) | `duplicate_event` |
+| `email` | trimmed, lower-cased, dot-atom local part and a dotted hostname with an alphabetic TLD (`a@b.c.`, `a@b..cc` are rejected) | `invalid_email` |
+| date fields (`joined`, `requested`, `deleted`) | one of: `YYYY-MM-DD` / `YYYY/MM/DD`, optional `[T ]HH:mm[:ss[.sss]]`, optional zone (`Z`, `±hh:mm`, or `UTC`/`GMT`/US & central-European abbreviations); or `Month D[th][,] YYYY [HH:mm[:ss]] [zone]` (`April 5th, 2021 13:45 PST`). Zone-less input is UTC; impossible dates (`2021-02-30`), relative words and anything else are rejected. Output is ISO 8601 UTC | `invalid_date` |
 | `roles` (user_registered) | comma-separated string, array of strings, or `null` → array of unique, trimmed, non-empty strings (`"admin, editor , manager"` → `["admin","editor","manager"]`, `["viewer"," "]` → `["viewer"]`, `null` → `[]`) | `invalid_roles` |
 | any required string (`name`, …) | non-empty after trimming | `missing_field` |
 
-Unknown extra fields are ignored; only normalized fields reach the database.
+Unknown extra fields are ignored; only normalized fields reach the database. Error messages never include the rejected value.
 
 ## Error handling
 
 - **Per-event errors** (everything in the table above) are returned as `{ ok: false, error, message }` at the event's index, logged at `WARN`, counted in `stats.rejected`. Processing continues.
 - **Request-level errors** (not an array, invalid JSON body) fail the invocation: HTTP `400 invalid_request` or a thrown `ValidationError` on direct invocation.
-- **Internal errors** (DB insert throws, bugs) fail the invocation: HTTP `500` with a generic message; the stack is in the logs. A partially processed batch is *not* rolled back — wrap the loop in a transaction when a real DB is attached.
+- **Storage errors** (DB insert throws) are per-event too: `{ ok: false, error: "storage_error" }`, logged at `ERROR`, counted in `stats.failed`; HTTP status becomes `207`. The client sees exactly which events were stored and can retry the whole batch, because inserts are idempotent on `event_id`.
+- **Internal errors** (bugs) fail the invocation: HTTP `500` with a generic message; the stack is in the logs.
 
 ## Database mapping
 
@@ -163,11 +168,22 @@ Unknown extra fields are ignored; only normalized fields reach the database.
 | Column | Value |
 | --- | --- |
 | `NotificationTypeID` | `typeId` from the registry (`1` user_registered, `2` password_reset, `3` user_deleted). Stable ids — never renumber |
-| `NotificationData` | JSON: `{ type, eventId?, ...normalized fields }` |
+| `EventID` | the event's `event_id` (trimmed) or `NULL`. **New column, see below** |
+| `NotificationData` | JSON: `{ type, ...normalized fields }` |
 | `CreatedByType` / `CreatedByID` | `0` / `0` (system). No actor is present in the events; set these when the producer starts sending one |
 | `Status`, `Seen`, `IsBookmarked`, `Created` | left to the column defaults |
 
-`insert(row)` is a stub: it logs the parameterized `INSERT` at `DEBUG` and returns a fake auto-increment id. Swap its body for a `mysql2` call; the row shape is the contract. For dedupe across invocations add a `UNIQUE` index on `NotificationData->>'$.eventId'` (generated column) — the in-memory set only covers one batch.
+`insertToMySQL(row)` is a stub: it logs the parameterized `INSERT IGNORE` at `DEBUG` and returns a fake auto-increment id. Swap its body for a `mysql2` call; the row shape is the contract. The in-memory dedupe set only covers one batch; cross-invocation idempotency comes from the schema change below.
+
+**Schema change required.** The handler assumes the `Notification` table has been extended with an `EventID` column and a unique index on it. Run this migration before deploying:
+
+```sql
+ALTER TABLE `Notification`
+  ADD COLUMN `EventID` VARCHAR(255) NULL AFTER `NotificationTypeID`,
+  ADD UNIQUE INDEX `uq_notification_event_id` (`EventID`);
+```
+
+`NULL` values are allowed multiple times by a MySQL unique index, so events without an `event_id` are always inserted. With the index in place, `INSERT IGNORE` turns a retried `event_id` into a no-op (`affectedRows = 0`) instead of a second row.
 
 ## AWS: build, local invoke, deploy
 
@@ -180,13 +196,13 @@ sam local invoke NotificationHandlerFunction --event events/api-gateway-event.js
 
 # Local HTTP API
 sam local start-api
-curl -s -X POST http://127.0.0.1:3000/events -H 'content-type: application/json' -d @sample/events.json
+curl -s -X POST http://127.0.0.1:3000/events -H 'content-type: application/json' -d @sample/events.json   # auth is not enforced locally
 
 # Deploy
 sam deploy --guided            # first time; afterwards: sam deploy
 ```
 
-The only configuration is `LOG_LEVEL` (template parameter `LogLevel`). The function needs no AWS permissions beyond basic execution logging.
+The only configuration is the `LogLevel` template parameter, applied as Lambda's `ApplicationLogLevel`. The logger is the same JSON-lines module as in `classifier--summarizer`: in Lambda it emits via `console.*` so the JSON log format produces structured CloudWatch entries; the CLI writes JSON lines to stderr. The HTTP API requires IAM (SigV4) auth; the deployed function needs no AWS permissions beyond basic execution logging. Only `app/` is packaged.
 
 ## Testing
 
@@ -195,7 +211,7 @@ npm test                 # node:test, no install
 npm run test:coverage
 ```
 
-Covered: every normalizer against the spec's sample formats, the pipeline on the full sample file (4 stored / 3 rejected, index alignment, logs), DB failure propagation, registry extension, handler for direct / HTTP / base64 / malformed bodies, and the CLI's exit codes.
+Covered: every normalizer against the spec's sample formats plus garbage inputs, timezone independence (the date suite re-runs under `TZ=America/New_York` and `Asia/Tokyo`), the pipeline on the full sample file (4 stored / 3 rejected, index alignment, no PII in logs), prototype-key event types, per-event storage errors, dedupe after an invalid first occurrence, registry extension, handler for direct / HTTP / base64 / malformed / oversized bodies and the 500 path, and the CLI's exit codes.
 
 ## Extending: adding an event type
 

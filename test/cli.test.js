@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 const RUN = new URL('../app/run.js', import.meta.url).pathname;
 const SAMPLE = new URL('../sample/events.json', import.meta.url).pathname;
@@ -9,7 +9,7 @@ test('CLI prints results JSON to stdout, logs to stderr, exits 0', () => {
   const r = spawnSync(process.execPath, [RUN, '--input', SAMPLE, '--log-level', 'WARN'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
-  assert.deepEqual(out.stats, { events: 7, stored: 4, rejected: 3 });
+  assert.deepEqual(out.stats, { events: 7, stored: 4, rejected: 3, failed: 0 });
   assert.match(r.stderr, /"level":"WARN"/);
 });
 
